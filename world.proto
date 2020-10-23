@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+message Player {
+    required uint32 x = 1;
+    required uint32 y = 2;
+    required bool is_player = 3;
+    required uint32 id = 4;
+}
+
+message World {
+    repeated Player players = 1;
+}

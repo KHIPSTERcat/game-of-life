@@ -1,5 +1,7 @@
 [requires]
 sfml/2.5.1@bincrafters/stable
+boost/1.74.0
+protobuf/3.11.4
 
 [generators]
 cmake

@@ -1,7 +1,10 @@
 #include <SFML/Graphics.hpp>
 #include <vector>
 #include <random>
+#include <boost/asio.hpp>
+#include "world.pb.h"
 
+using boost::asio::ip::tcp;
 
 const sf::Vector2f cell_offset(0.5f, 0.5f);
 const sf::Vector2f cell_size (4.f,4.f);
@@ -18,6 +21,9 @@ const sf::Color background_color(50, 50, 50);
 const sf::Color cell_color(255, 255, 255);
 const sf::Color grid_color(150, 150, 150);
 const sf::Color builder_color(255, 0, 0, 100);
+const sf::Color other_builder_color(0, 255, 0, 100);
+const char* default_port = "5000";
+const char* default_host = "localhost";
 
 using namespace std;
 
@@ -30,16 +36,46 @@ sf::Vector2f Normalize(const sf::Vector2f &vec) {
     return vec / sqrt(length);
 }
 
+std::string buff(1024,' ');
+std::vector<sf::Vector2i> other_players;
+
+void do_read(tcp::socket &socket)
+{
+    socket.async_read_some(boost::asio::buffer(buff),
+        [&](boost::system::error_code ec, std::size_t length)
+        {
+            if (!ec)
+            {
+                other_players.clear();
+                World world;
+                world.ParseFromArray(buff.data(), length);
+                for (auto player : world.players()) {
+                    if (!player.is_player()) other_players.emplace_back(player.x(), player.y());
+                }
+                do_read(socket);
+            }
+            else {
+                exit(0);
+            }
+        });
+}
+
 
 int main()
 {
     vector<vector<bool>> map(height,vector<bool>(width));
     vector<vector<bool>> buff_map(height,vector<bool>(width));
 
+    boost::asio::io_context io_context;
 
+    tcp::socket s(io_context);
+    tcp::resolver resolver(io_context);
+    boost::asio::connect(s, resolver.resolve(default_host, default_port));
+
+    do_read(s);
     
-
-    sf::RenderWindow window(sf::VideoMode::getFullscreenModes()[0], "Game Of Life", sf::Style::Fullscreen);
+    //, sf::Style::Fullscreen
+    sf::RenderWindow window(sf::VideoMode::getFullscreenModes()[0], "Game Of Life");
     sf::View view(window.getView());
     view.setCenter(sf::Vector2f(width * (cell_size.x + cell_offset.x) + cell_offset.x, height * (cell_size.y + cell_offset.y) + cell_offset.y) / 2.f);
     window.setView(view);
@@ -66,6 +102,7 @@ int main()
     {
         float dt = clock.restart().asSeconds();
         
+        io_context.poll();
 
         sf::Event event;
         while (window.pollEvent(event))
@@ -93,6 +130,8 @@ int main()
             direction += sf::Vector2f(0.f, 1.f);
         }
 
+        sf::Vector2i old_builder_position = builder_position;
+
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) {
             if (builder_position.x > 0 && builder_clock.getElapsedTime().asSeconds() > builder_speed) {
                 builder_position += sf::Vector2i(-1, 0); 
@@ -113,8 +152,18 @@ int main()
                 builder_position += sf::Vector2i(0, 1);
             }
         }
+
         if (builder_clock.getElapsedTime().asSeconds() > builder_speed) {
             builder_clock.restart();
+        }
+
+        if (old_builder_position != builder_position) {
+            Player player;
+            player.set_x(builder_position.x);
+            player.set_y(builder_position.y);
+            player.set_id(0);
+            player.set_is_player(true);
+            boost::asio::write(s, boost::asio::buffer(player.SerializeAsString()));
         }
 
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Q) || sf::Joystick::isButtonPressed(0, sf::Joystick::U)) {
@@ -194,6 +243,8 @@ int main()
 
         sf::RectangleShape builder_rect(cell_size);
         builder_rect.setFillColor(builder_color);
+        sf::RectangleShape other_builder_rect(cell_size);
+        other_builder_rect.setFillColor(other_builder_color);
         sf::RectangleShape cell_rect(cell_size);
         cell_rect.setFillColor(cell_color);
         sf::RectangleShape v_rect(sf::Vector2f(cell_offset.x, height * (cell_size.y + cell_offset.y) + cell_offset.y));
@@ -224,10 +275,15 @@ int main()
         }
 
 
-        builder_rect.setPosition(builder_position.x * (cell_size.x + cell_offset.x) + cell_offset.x,
-            builder_position.y * (cell_size.y + cell_offset.y) + cell_offset.y);
+        
+        for (auto builder_position : other_players) {
+            other_builder_rect.setPosition(builder_position.x* (cell_size.x + cell_offset.x) + cell_offset.x,
+                builder_position.y* (cell_size.y + cell_offset.y) + cell_offset.y);
+            window.draw(other_builder_rect);
+        }
+        builder_rect.setPosition(builder_position.x* (cell_size.x + cell_offset.x) + cell_offset.x,
+            builder_position.y* (cell_size.y + cell_offset.y) + cell_offset.y);
         window.draw(builder_rect);
-
 
         if (fps_clock.getElapsedTime().asSeconds() < fps) {
             window.display();
